@@ -1,98 +1,120 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, AttachmentBuilder } = require("discord.js");
-const Canvas = require("canvas");
+const { Client, GatewayIntentBits, Partials } = require("discord.js");
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
   ],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
-// Lưu dữ liệu checkin
-const streakData = {}; // { userId: { lastCheckin: Date, streak: Number } }
+const PREFIX = "mv!";
+const userData = new Map();
 
 client.once("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log(`✅ Đăng nhập thành công: ${client.user.tag}`);
+  client.user.setPresence({
+    activities: [{ name: "Mysvale", type: 0 }], // Playing Mysvale
+    status: "online",
+  });
+
+  // reset daily vào đúng 0h
+  setInterval(() => {
+    const now = new Date();
+    if (now.getHours() === 0 && now.getMinutes() === 0) {
+      userData.forEach((data) => {
+        data.checkedInToday = false;
+        data.messagesSentToday = 0;
+      });
+      console.log("🔄 Reset daily thành công!");
+    }
+  }, 60 * 1000);
 });
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  if (message.content.toLowerCase() === "!checkin") {
-    const userId = message.author.id;
-    const today = new Date().toDateString();
+  const userId = message.author.id;
+  if (!userData.has(userId)) {
+    userData.set(userId, {
+      streak: 0,
+      lastCheckin: null,
+      messagesSentToday: 0,
+      checkedInToday: false,
+    });
+  }
 
-    if (!streakData[userId]) {
-      streakData[userId] = { lastCheckin: null, streak: 0 };
+  const data = userData.get(userId);
+
+  // Nếu hôm nay chưa checkin thì đếm tin nhắn
+  if (!data.checkedInToday) {
+    data.messagesSentToday++;
+
+    // Số tin nhắn cần để lên lửa = 5 * ngày streak tiếp theo
+    const requiredMessages = 5 * (data.streak + 1);
+
+    if (data.messagesSentToday >= requiredMessages) {
+      data.streak++;
+      data.checkedInToday = true;
+      data.lastCheckin = new Date().toDateString();
+
+      try {
+        const member = await message.guild.members.fetch(userId);
+        const baseName = member.nickname || message.author.username;
+
+        // Xóa icon lửa cũ nếu có
+        const cleanedName = baseName.replace(/ 🔥\d+$/, "");
+        const newName = `${cleanedName} 🔥${data.streak}`;
+
+        await member.setNickname(newName);
+        message.channel.send(
+          `🔥 ${message.author} đã check-in thành công! Streak: ${data.streak} ngày`
+        );
+      } catch (err) {
+        console.error("❌ Lỗi đổi biệt danh:", err);
+        message.channel.send(
+          "Bot không thể đổi biệt danh (thiếu quyền Manage Nicknames)."
+        );
+      }
     }
+  }
 
-    const userData = streakData[userId];
+  // Lệnh với prefix
+  if (!message.content.startsWith(PREFIX)) return;
+  const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
 
-    if (userData.lastCheckin === today) {
-      return message.reply("❌ Bạn đã check-in hôm nay rồi, quay lại vào ngày mai nhé!");
-    }
+  if (command === "help") {
+    message.channel.send(
+      `📜 **Danh sách lệnh**:
+      \n\`${PREFIX}help\` → Xem danh sách lệnh
+      \n\`${PREFIX}reset\` → Xóa 🔥 trong biệt danh của bạn`
+    );
+  }
 
-    // Tính ngày liên tục
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    if (userData.lastCheckin === yesterday.toDateString()) {
-      userData.streak += 1;
-    } else {
-      userData.streak = 1;
-    }
-
-    userData.lastCheckin = today;
-
-    // Cập nhật biệt danh 🔥
+  if (command === "reset") {
     try {
       const member = await message.guild.members.fetch(userId);
-      let baseName = member.user.username;
-      let newNick = `${baseName} 🔥${userData.streak}`;
-      await member.setNickname(newNick);
+      const baseName = member.nickname || message.author.username;
+      const cleanedName = baseName.replace(/ 🔥\d+$/, "");
+      await member.setNickname(cleanedName);
+
+      userData.set(userId, {
+        streak: 0,
+        lastCheckin: null,
+        messagesSentToday: 0,
+        checkedInToday: false,
+      });
+
+      message.channel.send(`🔄 ${message.author} đã reset thành công!`);
     } catch (err) {
-      console.error("Không đổi được biệt danh:", err.message);
+      console.error("❌ Lỗi reset:", err);
+      message.channel.send("Bot không thể reset biệt danh.");
     }
-
-    // Vẽ ảnh streak
-    const imgBuffer = await createStreakImage(message.author.username, userData.streak);
-    const attachment = new AttachmentBuilder(imgBuffer, { name: "streak.png" });
-
-    message.reply({ content: `🎉 ${message.author}, bạn đã check-in thành công!`, files: [attachment] });
   }
 });
-
-async function createStreakImage(username, streak) {
-  const width = 700;
-  const height = 300;
-  const canvas = Canvas.createCanvas(width, height);
-  const ctx = canvas.getContext("2d");
-
-  // Nền
-  const gradient = ctx.createLinearGradient(0, 0, width, height);
-  gradient.addColorStop(0, "#3a1c71");
-  gradient.addColorStop(1, "#d76d77");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, width, height);
-
-  // Icon 🔥
-  ctx.font = "80px Sans";
-  ctx.fillStyle = "#ff9933";
-  ctx.fillText("🔥", 50, 100);
-
-  // Streak text
-  ctx.font = "40px Sans";
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText(`${streak} days active`, 150, 90);
-
-  // Username
-  ctx.font = "30px Sans";
-  ctx.fillStyle = "#eeeeee";
-  ctx.fillText(username, 50, 180);
-
-  return canvas.toBuffer();
-}
 
 client.login(process.env.TOKEN);
