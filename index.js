@@ -157,6 +157,67 @@ client.on("messageCreate", async (message) => {
       }
     }
   }
+  if (message.content === `${PREFIX}checkin`) {
+  const data = userData.get(message.author.id);
+  if (!data) {
+    return message.reply("❌ Bạn chưa từng checkin ngày nào.");
+  }
+
+  const streak = data.streak || 0;
+  const totalDays = data.totalDays || 0;
+
+  // Tạo canvas
+  const canvas = Canvas.createCanvas(600, 250);
+  const ctx = canvas.getContext("2d");
+
+  // Nền trắng bo góc
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Avatar user
+  const avatar = await Canvas.loadImage(
+    message.author.displayAvatarURL({ extension: "jpg" })
+  );
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(90, 125, 60, 0, Math.PI * 2, true);
+  ctx.closePath();
+  ctx.clip();
+  ctx.drawImage(avatar, 30, 65, 120, 120);
+  ctx.restore();
+
+  // Tên user
+  ctx.fillStyle = "#000000";
+  ctx.font = "bold 28px Sans";
+  ctx.fillText(message.author.username, 180, 100);
+
+  // Số ngày streak
+  ctx.fillStyle = "#ff5555";
+  ctx.font = "bold 26px Sans";
+  ctx.fillText(`🔥 Streak: ${streak} ngày`, 180, 150);
+
+  // Tổng số ngày đã checkin
+  ctx.fillStyle = "#555555";
+  ctx.font = "22px Sans";
+  ctx.fillText(`📅 Tổng ngày checkin: ${totalDays}`, 180, 190);
+
+  // Gửi ảnh
+  const attachment = { files: [{ attachment: canvas.toBuffer(), name: "checkin.png" }] };
+  return message.channel.send(attachment);
+}
+
+
+  // Hàm reset streak nếu quá 3 ngày
+function resetStreakIfExpired(userId) {
+  const user = checkinData[userId];
+  if (!user) return;
+  const now = Date.now();
+  const diffDays = Math.floor((now - user.lastCheckin) / (1000 * 60 * 60 * 24));
+  if (diffDays >= 3) {
+    user.streak = 0;
+  }
+}
+
 
   // Lệnh với prefix
   if (!message.content.startsWith(PREFIX)) return;
@@ -167,7 +228,8 @@ client.on("messageCreate", async (message) => {
     message.channel.send(
       `📜 **Danh sách lệnh**:
       \n\`${PREFIX}help\` → Xem danh sách lệnh
-      \n\`${PREFIX}reset\` → Xóa 🔥 trong biệt danh của bạn`
+      \n\`${PREFIX}reset\` → Xóa 🔥 trong biệt danh của bạn
+      \n\`${PREFIX}checkin\` → Check được xem bạn có bao nhiêu streaks rồi`
     );
   }
 
@@ -192,6 +254,27 @@ client.on("messageCreate", async (message) => {
     }
   }
 });
+
+// Kiểm tra reset nếu quá 3 ngày không streak
+userData.forEach((data, userId) => {
+  if (data.lastCheckin) {
+    const diffDays = Math.floor(
+      (Date.now() - data.lastCheckin) / (1000 * 60 * 60 * 24)
+    );
+    if (diffDays >= 3) {
+      data.streak = 0;
+      data.totalDays = 0;
+      data.lastCheckin = null;
+
+      // Thông báo cho user
+      const user = client.users.cache.get(userId);
+      if (user) {
+        user.send("⚠️ Bạn đã bỏ checkin quá 3 ngày, chuỗi streak của bạn đã bị reset!");
+      }
+    }
+  }
+});
+
 
 client.login(process.env.TOKEN);
 
